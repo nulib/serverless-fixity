@@ -56,7 +56,7 @@ export class ChecksumValidation extends FixityState {
       throw new InvalidArgumentError(`missing computed checksum(s) for ${uncomputed.join(', ')}`);
     }
 
-    this.s3 = s3 ?? getS3Client(this.credentials);
+    this.s3 = s3 ?? getS3Client();
     this.storeChecksumOnTagging = payload.StoreChecksumOnTagging !== false;
     this.tagSet = [];
     this.head = undefined;

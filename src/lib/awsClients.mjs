@@ -9,45 +9,17 @@ import {
   SFNClient,
 } from '@aws-sdk/client-sfn';
 
-import {
-  fromTemporaryCredentials,
-} from '@aws-sdk/credential-providers';
-
-const SOLUTION_ID = process.env.ENV_SOLUTION_ID ?? 'serverless-fixity';
-
 /**
- * S3 clients are cached per role so a warm container reuses both the
- * connection pool and the assumed-role credentials, which the credential
- * provider refreshes on its own.
+ * Clients are cached so a warm container reuses the connection pool across
+ * invocations. Both pick up the function's execution role from the
+ * environment.
  */
-const s3Clients = new Map();
 
-/**
- * @param {object} [options]
- * @param {string} [options.vendorRole] role to assume for cross-account reads;
- *   omit to use the function's own execution role
- * @param {string} [options.vendorExternalId] external id the role's trust
- *   policy requires, if any
- */
-export function getS3Client({ vendorRole, vendorExternalId } = {}) {
-  const cacheKey = `${vendorRole ?? ''}|${vendorExternalId ?? ''}`;
+let s3Client;
 
-  let client = s3Clients.get(cacheKey);
-  if (!client) {
-    client = new S3Client({
-      credentials: vendorRole
-        ? fromTemporaryCredentials({
-          params: {
-            RoleArn: vendorRole,
-            RoleSessionName: SOLUTION_ID,
-            ...(vendorExternalId ? { ExternalId: vendorExternalId } : {}),
-          },
-        })
-        : undefined,
-    });
-    s3Clients.set(cacheKey, client);
-  }
-  return client;
+export function getS3Client() {
+  s3Client ??= new S3Client({});
+  return s3Client;
 }
 
 let sfnClient;
@@ -59,6 +31,6 @@ export function getSfnClient() {
 
 /** Test seam: drop the cached clients so a fake can be injected. */
 export function resetClients() {
-  s3Clients.clear();
+  s3Client = undefined;
   sfnClient = undefined;
 }

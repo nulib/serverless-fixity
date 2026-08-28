@@ -33,12 +33,10 @@ const withSfn = (event, sfn) => {
 describe('ApiRequest', () => {
   before(() => {
     process.env.ENV_STATE_MACHINE_ARN = STATE_MACHINE_ARN;
-    process.env.ENV_ALLOW_ORIGINS = 'https://archive.example.edu';
   });
 
   after(() => {
     delete process.env.ENV_STATE_MACHINE_ARN;
-    delete process.env.ENV_ALLOW_ORIGINS;
   });
 
   it('starts a run from a POST and echoes the normalized input', async () => {
@@ -49,7 +47,7 @@ describe('ApiRequest', () => {
     }, sfn).request();
 
     assert.equal(response.statusCode, 200);
-    assert.equal(response.headers['Access-Control-Allow-Origin'], 'https://archive.example.edu');
+    assert.equal(response.headers['Content-Type'], 'application/json');
 
     const body = JSON.parse(response.body);
     assert.equal(body.executionArn, EXECUTION_ARN);
@@ -114,6 +112,19 @@ describe('ApiRequest', () => {
     const response = await withSfn({ httpMethod: 'GET' }, new FakeSfn()).request();
     assert.equal(response.statusCode, 400);
     assert.match(JSON.parse(response.body).Error, /missing executionArn/);
+  });
+
+  it('leaves CORS headers to the function URL', async () => {
+    const sfn = new FakeSfn({ status: 'SUCCEEDED' });
+    const response = await withSfn({
+      httpMethod: 'GET',
+      queryStringParameters: { executionArn: EXECUTION_ARN },
+    }, sfn).request();
+
+    /* the function URL adds these itself; a duplicate header is fatal to a
+     * browser, so the handler must not emit one */
+    const cors = Object.keys(response.headers).filter((name) => /^access-control-/i.test(name));
+    assert.deepEqual(cors, []);
   });
 
   it('refuses methods it does not implement', async () => {

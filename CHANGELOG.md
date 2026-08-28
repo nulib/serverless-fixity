@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- A Terraform module in `terraform/` that deploys the same resources as the SAM
+  template, for configurations that already use Terraform. It shares
+  `statemachine/fixity.asl.json` with the SAM template rather than copying it,
+  so the two cannot drift, and it builds the Lambda package itself or takes a
+  prebuilt zip via `lambda_zip_path`.
+- CI validates the Terraform module and its example.
+
+### Changed
+- CORS is left entirely to the Lambda function URL. The request handler no
+  longer emits an `Access-Control-Allow-Origin` header of its own, which a
+  browser would reject as a duplicate, and `ENV_ALLOW_ORIGINS` is gone.
+
+### Removed
+- Cross-account (vendor) reads. `VendorRole` and `VendorExternalId` are no
+  longer accepted on a request, and the code that assumed those roles is gone,
+  matching the deployment templates, which had already dropped the
+  `sts:AssumeRole` grant. To check objects another account owns, grant the
+  functions' roles access in that account's bucket policy.
+- The `@aws-sdk/credential-providers` dependency, which only existed to assume
+  vendor roles, and the now-unused `ENV_SOLUTION_ID` environment variable.
+- Stale README sections describing `VendorAccountRoleList`, `ApiStageName` and
+  `execute-api` request signing, none of which apply to a function URL.
+
 ## [2.0.0] - 2026-08-28
 
 A rewrite. The behaviour of a fixity run is the same, but how it is deployed,

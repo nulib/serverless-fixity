@@ -64,7 +64,7 @@ export class ChecksumCompute extends FixityState {
     singlePassLimit,
   } = {}) {
     super(STATE_NAME, payload);
-    this.s3 = s3 ?? getS3Client(this.credentials);
+    this.s3 = s3 ?? getS3Client();
     this.remainingTimeInMillis = remainingTimeInMillis;
     this.singlePassLimit = singlePassLimit
       ?? Number(process.env.ENV_SINGLE_PASS_LIMIT ?? DEFAULT_SINGLE_PASS_LIMIT);

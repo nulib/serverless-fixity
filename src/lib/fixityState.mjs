@@ -133,13 +133,6 @@ export function normalizeRequest(input = {}) {
   const algorithms = parseAlgorithms(input);
   const expected = parseExpected(input.Expected, algorithms);
 
-  if (input.VendorRole && !/^arn:aws[a-z-]*:iam::\d{12}:role\/[\w+=,.@/-]{1,512}$/.test(input.VendorRole)) {
-    throw new InvalidArgumentError('VendorRole must be an IAM role ARN');
-  }
-  if (input.VendorExternalId && !/^[\w+=,.@:/-]{2,1224}$/.test(input.VendorExternalId)) {
-    throw new InvalidArgumentError('invalid VendorExternalId');
-  }
-
   return {
     Bucket: input.Bucket,
     Key: input.Key,
@@ -149,8 +142,6 @@ export function normalizeRequest(input = {}) {
     StoreChecksumOnTagging: input.StoreChecksumOnTagging !== false,
     ChunkSize: parseChunkSize(input.ChunkSize),
     RestoreRequest: parseRestoreRequest(input.RestoreRequest),
-    ...(input.VendorRole ? { VendorRole: input.VendorRole } : {}),
-    ...(input.VendorExternalId ? { VendorExternalId: input.VendorExternalId } : {}),
   };
 }
 
@@ -180,8 +171,6 @@ export class FixityState {
     this.fileSize = payload.FileSize === undefined ? undefined : Number(payload.FileSize);
     this.algorithms = parseAlgorithms(payload);
     this.expected = parseExpected(payload.Expected, this.algorithms);
-    this.vendorRole = payload.VendorRole;
-    this.vendorExternalId = payload.VendorExternalId;
 
     if (payload.State !== stateName) {
       this.status = 'STARTED';
@@ -193,13 +182,6 @@ export class FixityState {
 
     this.priorElapsed = Number(payload.Elapsed ?? 0);
     this.startedAt = Date.now();
-  }
-
-  get credentials() {
-    return {
-      vendorRole: this.vendorRole,
-      vendorExternalId: this.vendorExternalId,
-    };
   }
 
   get elapsed() {

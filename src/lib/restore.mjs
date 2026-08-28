@@ -93,7 +93,7 @@ export function estimateWaitInSeconds({ storageClass, tier, restoreStartAt }) {
 export class S3Restore extends FixityState {
   constructor(payload = {}, { s3 } = {}) {
     super(STATE_NAME, payload);
-    this.s3 = s3 ?? getS3Client(this.credentials);
+    this.s3 = s3 ?? getS3Client();
     this.restoreRequest = payload.RestoreRequest ?? {};
     this.restoreStartAt = payload.RestoreStartAt;
   }

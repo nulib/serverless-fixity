@@ -36,14 +36,15 @@ export class ApiRequest {
     this.event = event;
     this.context = context;
     this.stateMachineArn = stateMachineArn;
-    this.allowOrigins = process.env.ENV_ALLOW_ORIGINS || '*';
     this.sfn = getSfnClient();
   }
 
-  get corsHeaders() {
+  /* CORS headers are added by the function URL's own configuration, so the
+   * handler must not set them: a duplicated Access-Control-Allow-Origin is
+   * rejected outright by browsers. */
+  get responseHeaders() {
     return {
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': this.allowOrigins,
     };
   }
 
@@ -67,7 +68,7 @@ export class ApiRequest {
   reply(statusCode, body) {
     return {
       statusCode,
-      headers: this.corsHeaders,
+      headers: this.responseHeaders,
       body: JSON.stringify(body),
     };
   }
@@ -108,9 +109,7 @@ export class ApiRequest {
    *   "Expected": { "md5": "<hex>" },             // or a bare hex string
    *   "ChunkSize": 21474836480,
    *   "StoreChecksumOnTagging": true,
-   *   "RestoreRequest": { "Days": 1, "Tier": "Bulk" },
-   *   "VendorRole": "arn:aws:iam::111111111111:role/CrossAccountRead",
-   *   "VendorExternalId": "..."
+   *   "RestoreRequest": { "Days": 1, "Tier": "Bulk" }
    * }
    */
   async onPOST() {

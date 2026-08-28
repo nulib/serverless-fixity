@@ -19,7 +19,7 @@ Parameters:
 
   AllowOrigins:
     Type: String
-    Description: Value returned in the API's Access-Control-Allow-Origin header.
+    Description: Origin allowed by the function URL's CORS configuration.
     Default: "*"
 
   ComputeChecksumMemorySize:
@@ -74,7 +74,7 @@ Metadata:
           - LogRetentionInDays
     ParameterLabels:
       ContentBucketList: {default: Content bucket list}
-      AllowOrigins: {default: Access-Control-Allow-Origin}
+      AllowOrigins: {default: Allowed CORS origin}
       ComputeChecksumMemorySize: {default: Hashing function memory (MB)}
       SinglePassLimitBytes: {default: Single-pass size limit (bytes)}
       LogRetentionInDays: {default: Log retention (days)}
@@ -90,7 +90,6 @@ Globals:
     Timeout: 300
     Environment:
       Variables:
-        ENV_SOLUTION_ID: !Ref AWS::StackName
         # Trim the SDK's own retries: the state machine already retries, and a
         # long client-side retry can eat the invocation's remaining time.
         AWS_MAX_ATTEMPTS: "3"
@@ -242,7 +241,6 @@ Resources:
       Environment:
         Variables:
           ENV_STATE_MACHINE_ARN: !Ref FixityStateMachine
-          ENV_ALLOW_ORIGINS: !Ref AllowOrigins
       Policies:
         - Version: "2012-10-17"
           Statement:

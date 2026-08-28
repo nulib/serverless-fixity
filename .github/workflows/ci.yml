@@ -48,3 +48,27 @@ jobs:
 
       - name: Build
         run: sam build
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive terraform/
+
+      - name: Validate module
+        working-directory: terraform
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: Validate example
+        working-directory: terraform/examples/complete
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate

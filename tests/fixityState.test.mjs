@@ -105,12 +105,9 @@ describe('normalizeRequest', () => {
     assert.throws(() => normalizeRequest({ Bucket: 'b', Key: 'k', RestoreRequest: [] }), /must be an object/);
   });
 
-  it('validates the cross-account role', () => {
-    assert.throws(() => normalizeRequest({ Bucket: 'b', Key: 'k', VendorRole: 'nope' }), /VendorRole/);
-    assert.equal(
-      normalizeRequest({ Bucket: 'b', Key: 'k', VendorRole: 'arn:aws:iam::111111111111:role/Read' }).VendorRole,
-      'arn:aws:iam::111111111111:role/Read'
-    );
+  it('drops fields it does not recognize', () => {
+    const normalized = normalizeRequest({ Bucket: 'b', Key: 'k', VendorRole: 'arn:aws:iam::111111111111:role/Read' });
+    assert.ok(!('VendorRole' in normalized), 'only known fields reach the state machine');
   });
 });
 

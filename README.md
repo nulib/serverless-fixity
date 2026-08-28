@@ -110,30 +110,46 @@ sam build && sam deploy --guided
 `samconfig.toml`; after that, `sam deploy` is enough. To iterate on the Lambda
 code without a full deploy, use `sam sync`.
 
+If your infrastructure already lives in Terraform, [terraform/](terraform) is a
+module that deploys the same resources and can be called from an existing
+configuration:
+
+```hcl
+module "fixity" {
+  source          = "github.com/nulib/serverless-fixity//terraform"
+  name            = "preservation-fixity"
+  content_buckets = ["my-preservation-masters"]
+}
+```
+
 ### Parameters
 
 | Parameter | Default | Notes |
 | --- | --- | --- |
 | `ContentBucketList` | `*` | Comma-separated bucket names the solution may read. Narrow this to the buckets you actually check. |
-| `VendorAccountRoleList` | *(blank)* | Comma-separated IAM role ARNs in other accounts, for checking objects you do not own. |
-| `ApiStageName` | `demo` | First path segment of the endpoint. |
-| `AllowOrigins` | `*` | Value returned in `Access-Control-Allow-Origin`. |
+| `AllowOrigins` | `*` | Origin allowed by the function URL's CORS configuration. |
 | `ComputeChecksumMemorySize` | `3008` | Memory buys proportional CPU and network, so raising this shortens runs. |
 | `SinglePassLimitBytes` | `8589934592` | Objects at or below this size take the `node:crypto` fast path. |
 | `LambdaArchitecture` | `arm64` | No native dependencies, so either architecture works. |
 | `LogRetentionInDays` | `30` | |
 
-The stack outputs `ApiEndpoint` and `StateMachineArn`.
+The stack outputs `ApiEndpoint` -- the function URL -- and `StateMachineArn`.
+
+Callers sign requests with SigV4 and need `lambda:InvokeFunctionUrl` on the
+`OnRequest` function. CORS is handled by the function URL itself, so the
+handler returns no `Access-Control-*` headers of its own.
 
 ## Using it
 
 ### Start a run
 
-The API requires SigV4, so callers need `execute-api:Invoke` on the endpoint.
+The function URL uses `AWS_IAM` auth, so requests are signed for the `lambda`
+service and the caller needs `lambda:InvokeFunctionUrl` on the `OnRequest`
+function.
 
 ```bash
 curl -X POST "$API_ENDPOINT" \
-  --aws-sigv4 "aws:amz:$AWS_REGION:execute-api" \
+  --aws-sigv4 "aws:amz:$AWS_REGION:lambda" \
   --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
   -H "x-amz-security-token: $AWS_SESSION_TOKEN" \
   -H 'Content-Type: application/json' \
@@ -144,7 +160,7 @@ curl -X POST "$API_ENDPOINT" \
       }'
 ```
 
-Or skip the API and start the state machine directly:
+Or skip the endpoint and start the state machine directly:
 
 ```bash
 aws stepfunctions start-execution \
@@ -162,13 +178,12 @@ aws stepfunctions start-execution \
 | `StoreChecksumOnTagging` | no | Set `false` to compare without writing tags. Defaults to `true`. |
 | `ChunkSize` | no | Ceiling on bytes requested per invocation. The invocation deadline usually cuts a range short first. |
 | `RestoreRequest` | no | `{"Days": 1, "Tier": "Bulk"}`. `Tier` is one of `Standard`, `Bulk`, `Expedited`. |
-| `VendorRole`, `VendorExternalId` | no | Role to assume for cross-account reads. Must also appear in `VendorAccountRoleList`. |
 
 ### Check on a run
 
 ```bash
 curl -G "$API_ENDPOINT" --data-urlencode "executionArn=$EXECUTION_ARN" \
-  --aws-sigv4 "aws:amz:$AWS_REGION:execute-api" \
+  --aws-sigv4 "aws:amz:$AWS_REGION:lambda" \
   --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
   -H "x-amz-security-token: $AWS_SESSION_TOKEN"
 ```
@@ -216,15 +231,6 @@ on it. Alert on the field, not on the execution status. To be notified, put an
 EventBridge rule on Step Functions execution status changes, or read
 `ComparedResult` from the execution output.
 
-## Cross-account objects
-
-To check objects in an account you do not control, have that account create a
-role trusting this one, with `s3:GetObject`, `s3:GetObjectTagging`,
-`s3:PutObjectTagging` and `s3:RestoreObject` on the buckets in question. Then
-add the role ARN to `VendorAccountRoleList` and pass it as `VendorRole` on the
-request. Requiring an `ExternalId` on the role's trust policy is good practice;
-pass it as `VendorExternalId`.
-
 ## Development
 
 ```bash
@@ -256,6 +262,7 @@ src/
     fixityState.mjs        the payload contract shared by every state
     hash/                  resumable MD5, SHA-1, SHA-256
 tests/
+terraform/                 the same resources as a Terraform module
 tools/execution-summary.mjs  what one execution cost, per state
 ```
 
