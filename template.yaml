@@ -1,0 +1,351 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: >-
+  Serverless fixity for digital preservation compliance. Computes MD5, SHA-1 and
+  SHA-256 checksums for S3 objects of any size -- restoring them from Glacier
+  first if need be -- then compares the results against known values and records
+  them as object tags.
+
+Parameters:
+  ContentBucketList:
+    Type: String
+    Description: >-
+      Comma-separated bucket names the solution may read, e.g. BucketA,BucketB.
+      A single asterisk grants access to every bucket in this account.
+    Default: "*"
+    AllowedPattern: (^\*$)|([a-z0-9][a-z0-9-.]{1,61}[a-z0-9])(,[a-z0-9][a-z0-9-.]{1,61}[a-z0-9])*
+    ConstraintDescription: must be * or a comma-separated list of valid S3 bucket names
+
+  VendorAccountRoleList:
+    Type: String
+    Description: >-
+      Comma-separated IAM role ARNs in other accounts that the solution may
+      assume to read their buckets. Leave blank if you have none.
+    Default: ""
+    AllowedPattern: (^$)|(arn:aws:iam::\d{12}:role/[\w+=,.@/-]{1,512})(,arn:aws:iam::\d{12}:role/[\w+=,.@/-]{1,512})*
+    ConstraintDescription: must be blank or a comma-separated list of IAM role ARNs
+
+  AllowOrigins:
+    Type: String
+    Description: Value returned in the API's Access-Control-Allow-Origin header.
+    Default: "*"
+
+  ApiStageName:
+    Type: String
+    Description: API Gateway stage name, which becomes the first path segment of the endpoint.
+    Default: demo
+    AllowedPattern: "[a-zA-Z0-9_-]+"
+
+  ComputeChecksumMemorySize:
+    Type: Number
+    Description: >-
+      Memory for the hashing function, in MB. Memory buys proportional CPU and
+      network, so raising this speeds up hashing and shortens runs.
+    Default: 3008
+    MinValue: 512
+    MaxValue: 10240
+
+  SinglePassLimitBytes:
+    Type: Number
+    Description: >-
+      Objects at or below this size are hashed in one invocation using node:crypto,
+      which is far faster but cannot be suspended. Larger objects use the
+      resumable implementation and may span invocations.
+    Default: 8589934592
+    MinValue: 0
+
+  LogRetentionInDays:
+    Type: Number
+    Description: How long to keep the functions' CloudWatch logs.
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 3653]
+
+  LambdaArchitecture:
+    Type: String
+    Description: >-
+      arm64 is cheaper per millisecond. The functions have no native
+      dependencies, so either works.
+    Default: arm64
+    AllowedValues: [arm64, x86_64]
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Content access
+        Parameters:
+          - ContentBucketList
+          - VendorAccountRoleList
+      - Label:
+          default: API
+        Parameters:
+          - ApiStageName
+          - AllowOrigins
+      - Label:
+          default: Tuning
+        Parameters:
+          - ComputeChecksumMemorySize
+          - SinglePassLimitBytes
+          - LambdaArchitecture
+          - LogRetentionInDays
+    ParameterLabels:
+      ContentBucketList: {default: Content bucket list}
+      VendorAccountRoleList: {default: Cross-account (vendor) IAM roles}
+      AllowOrigins: {default: Access-Control-Allow-Origin}
+      ApiStageName: {default: API stage name}
+      ComputeChecksumMemorySize: {default: Hashing function memory (MB)}
+      SinglePassLimitBytes: {default: Single-pass size limit (bytes)}
+      LogRetentionInDays: {default: Log retention (days)}
+      LambdaArchitecture: {default: Lambda architecture}
+
+Conditions:
+  HasVendorRoles: !Not [!Equals [!Ref VendorAccountRoleList, ""]]
+
+Globals:
+  Function:
+    Runtime: nodejs24.x
+    CodeUri: src/
+    Architectures:
+      - !Ref LambdaArchitecture
+    MemorySize: 256
+    Timeout: 300
+    Environment:
+      Variables:
+        ENV_SOLUTION_ID: !Ref AWS::StackName
+        # Trim the SDK's own retries: the state machine already retries, and a
+        # long client-side retry can eat the invocation's remaining time.
+        AWS_MAX_ATTEMPTS: "3"
+        NODE_OPTIONS: --enable-source-maps
+
+Resources:
+  #####################################################################
+  # Step Functions state machine
+  #####################################################################
+  FixityStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub ${AWS::StackName}-fixity
+      DefinitionUri: statemachine/fixity.asl.json
+      DefinitionSubstitutions:
+        CheckRestoreStatusArn: !GetAtt CheckRestoreStatusFunction.Arn
+        ComputeChecksumArn: !GetAtt ComputeChecksumFunction.Arn
+        FinalValidationArn: !GetAtt FinalValidationFunction.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref CheckRestoreStatusFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ComputeChecksumFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref FinalValidationFunction
+
+  #####################################################################
+  # CheckRestoreStatus -- pin the object, restore it if archived
+  #####################################################################
+  CheckRestoreStatusLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-CheckRestoreStatus
+      RetentionInDays: !Ref LogRetentionInDays
+
+  CheckRestoreStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-CheckRestoreStatus
+      Description: Pin the object's identity and drive any Glacier restore it needs.
+      Handler: index.CheckRestoreStatus
+      LoggingConfig:
+        LogGroup: !Ref CheckRestoreStatusLogGroup
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:GetObjectVersion
+                - s3:RestoreObject
+              Resource: !Split
+                - ","
+                - !Join
+                  - "/*,arn:aws:s3:::"
+                  - !Split
+                    - ","
+                    - !Sub arn:aws:s3:::${ContentBucketList}/*
+
+  #####################################################################
+  # ComputeChecksum -- hash one range of the object per invocation
+  #####################################################################
+  ComputeChecksumLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-ComputeChecksum
+      RetentionInDays: !Ref LogRetentionInDays
+
+  ComputeChecksumFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-ComputeChecksum
+      Description: Read a range of the object once and advance every requested hash.
+      Handler: index.ComputeChecksum
+      MemorySize: !Ref ComputeChecksumMemorySize
+      # The state machine loops this function, so it takes the full 15 minutes
+      # and suspends its hash state when the deadline nears.
+      Timeout: 900
+      LoggingConfig:
+        LogGroup: !Ref ComputeChecksumLogGroup
+      Environment:
+        Variables:
+          ENV_SINGLE_PASS_LIMIT: !Ref SinglePassLimitBytes
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:GetObjectVersion
+              Resource: !Split
+                - ","
+                - !Join
+                  - "/*,arn:aws:s3:::"
+                  - !Split
+                    - ","
+                    - !Sub arn:aws:s3:::${ContentBucketList}/*
+
+  #####################################################################
+  # FinalValidation -- compare the digests and tag the object
+  #####################################################################
+  FinalValidationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-FinalValidation
+      RetentionInDays: !Ref LogRetentionInDays
+
+  FinalValidationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-FinalValidation
+      Description: Compare each computed digest against a known reference and tag the object.
+      Handler: index.FinalValidation
+      LoggingConfig:
+        LogGroup: !Ref FinalValidationLogGroup
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:GetObjectVersion
+                - s3:GetObjectTagging
+                - s3:GetObjectVersionTagging
+                - s3:PutObjectTagging
+                - s3:PutObjectVersionTagging
+              Resource: !Split
+                - ","
+                - !Join
+                  - "/*,arn:aws:s3:::"
+                  - !Split
+                    - ","
+                    - !Sub arn:aws:s3:::${ContentBucketList}/*
+
+  #####################################################################
+  # REST API -- start a run, or ask how one is going
+  #####################################################################
+  FixityApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub ${AWS::StackName}-api
+      StageName: !Ref ApiStageName
+      Auth:
+        # Callers sign requests with SigV4; preflight is left unauthenticated
+        # because a browser cannot sign it.
+        DefaultAuthorizer: AWS_IAM
+        AddDefaultAuthorizerToCorsPreflight: false
+      Cors:
+        AllowOrigin: !Sub "'${AllowOrigins}'"
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Authorization,Content-Type,X-Amz-Date,X-Amz-Security-Token,X-Amz-Content-Sha256,X-Api-Key'"
+      MethodSettings:
+        - ResourcePath: /*
+          HttpMethod: "*"
+          LoggingLevel: ERROR
+          MetricsEnabled: true
+
+  OnRequestLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-OnRequest
+      RetentionInDays: !Ref LogRetentionInDays
+
+  OnRequestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-OnRequest
+      Description: Start a fixity run, or report on an existing one.
+      Handler: index.OnRequest
+      LoggingConfig:
+        LogGroup: !Ref OnRequestLogGroup
+      Environment:
+        Variables:
+          ENV_STATE_MACHINE_ARN: !Ref FixityStateMachine
+          ENV_ALLOW_ORIGINS: !Ref AllowOrigins
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: states:StartExecution
+              Resource: !Ref FixityStateMachine
+            - Effect: Allow
+              Action: states:DescribeExecution
+              Resource: !Sub
+                - arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:execution:${name}:*
+                - name: !GetAtt FixityStateMachine.Name
+      Events:
+        StartFixity:
+          Type: Api
+          Properties:
+            RestApiId: !Ref FixityApi
+            Path: /fixity
+            Method: post
+        GetFixity:
+          Type: Api
+          Properties:
+            RestApiId: !Ref FixityApi
+            Path: /fixity
+            Method: get
+
+  #####################################################################
+  # Cross-account reads
+  #
+  # Attached to every function that touches content. To onboard another
+  # vendor, add its role ARN to the VendorAccountRoleList parameter.
+  #####################################################################
+  VendorCrossAccountPolicy:
+    Type: AWS::IAM::Policy
+    Condition: HasVendorRoles
+    Properties:
+      PolicyName: !Sub ${AWS::StackName}-assume-vendor-roles
+      Roles:
+        - !Ref CheckRestoreStatusFunctionRole
+        - !Ref ComputeChecksumFunctionRole
+        - !Ref FinalValidationFunctionRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Resource: !Split [",", !Ref VendorAccountRoleList]
+
+Outputs:
+  ApiEndpoint:
+    Description: POST here to start a fixity run; GET here to check on one.
+    Value: !Sub https://${FixityApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/${ApiStageName}/fixity
+
+  StateMachineArn:
+    Description: Start executions directly against this ARN to bypass the API.
+    Value: !Ref FixityStateMachine
+
+  StateMachineName:
+    Value: !GetAtt FixityStateMachine.Name
+
+  ComputeChecksumFunction:
+    Value: !Ref ComputeChecksumFunction

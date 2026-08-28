@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dev tooling
+        run: npm ci --no-audit --no-fund
+
+      # src/ is the deployable package and carries its own dependencies. The
+      # tests import its modules, so they have to be resolvable here too --
+      # sam build installs them separately for the Lambda artifacts.
+      - name: Install Lambda dependencies
+        working-directory: src
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+  template:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install AWS SAM CLI
+        run: pip install --upgrade aws-sam-cli
+
+      - name: Validate template
+        run: sam validate --lint
+
+      - name: Build
+        run: sam build

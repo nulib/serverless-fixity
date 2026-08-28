@@ -1,61 +1,45 @@
-# Contributing Guidelines
+# Contributing
 
-Thank you for your interest in contributing to our project. Whether it's a bug report, new feature, correction, or additional
-documentation, we greatly value feedback and contributions from our community.
+Bug reports, feature requests and pull requests are all welcome through the
+GitHub issue tracker and pull requests on this repository.
 
-Please read through this document before submitting any issues or pull requests to ensure we have all the necessary
-information to effectively respond to your bug report or contribution.
+## Development loop
 
+Requires Node.js 24+ and the [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html).
 
-## Reporting Bugs/Feature Requests
+```bash
+npm install        # lint tooling
+npm test           # installs src/'s dependencies on first run
+npm run lint
+npm run validate   # sam validate --lint
+npm run build      # sam build
+```
 
-We welcome you to use the GitHub issue tracker to report bugs or suggest features.
+The root package holds the lint tooling; `src/` is the deployable package and
+declares the AWS SDK dependencies. The tests import `src/`, so both need to be
+installed -- `npm test` handles that for you, and CI installs them explicitly.
 
-When filing an issue, please check [existing open](https://github.com/awslabs/serverless-fixity-for-digital-preservation-compliance/issues), or [recently closed](https://github.com/awslabs/serverless-fixity-for-digital-preservation-compliance/issues?utf8=%E2%9C%93&q=is%3Aissue%20is%3Aclosed%20), issues to make sure somebody else hasn't already
-reported the issue. Please try to include as much information as you can. Details like these are incredibly useful:
+Please make sure `npm test`, `npm run lint` and `npm run validate` all pass
+before opening a pull request. CI runs the same three.
 
-* A reproducible test case or series of steps
-* The version of our code being used
-* Any modifications you've made relevant to the bug
-* Anything unusual about your environment or deployment
+## Things worth knowing
 
+- The tests never call AWS. S3 and Step Functions clients are injected, so add
+  a fake in `tests/helpers/` rather than reaching for the network.
+- Anything touching `src/lib/hash` needs to keep agreeing with `node:crypto`,
+  including across serialize/deserialize cycles. `tests/hash.test.mjs` is the
+  contract; extend it rather than working around it.
+- Error class names in `src/lib/errors.mjs` are matched by name in
+  `statemachine/fixity.asl.json`, so renaming one changes retry behaviour.
+- `src/lib/fixityState.mjs` defines the payload every state passes to the next.
+  A change there is a change to the state machine's public contract.
 
-## Contributing via Pull Requests
-Contributions via pull requests are much appreciated. Before sending us a pull request, please ensure that:
+## Security
 
-1. You are working against the latest source on the *master* branch.
-2. You check existing open, and recently merged, pull requests to make sure someone else hasn't addressed the problem already.
-3. You open an issue to discuss any significant work - we would hate for your time to be wasted.
-
-To send us a pull request, please:
-
-1. Fork the repository.
-2. Modify the source; please focus on the specific change you are contributing. If you also reformat all the code, it will be hard for us to focus on your change.
-3. Ensure local tests pass.
-4. Commit to your fork using clear commit messages.
-5. Send us a pull request, answering any default questions in the pull request interface.
-6. Pay attention to any automated CI failures reported in the pull request, and stay involved in the conversation.
-
-GitHub provides additional document on [forking a repository](https://help.github.com/articles/fork-a-repo/) and
-[creating a pull request](https://help.github.com/articles/creating-a-pull-request/).
-
-
-## Finding contributions to work on
-Looking at the existing issues is a great way to find something to contribute on. As our projects, by default, use the default GitHub issue labels ((enhancement/bug/duplicate/help wanted/invalid/question/wontfix), looking at any ['help wanted'](https://github.com/awslabs/serverless-fixity-for-digital-preservation-compliance/labels/help%20wanted) issues is a great place to start.
-
-
-## Code of Conduct
-This project has adopted the [Amazon Open Source Code of Conduct](https://aws.github.io/code-of-conduct).
-For more information see the [Code of Conduct FAQ](https://aws.github.io/code-of-conduct-faq) or contact
-opensource-codeofconduct@amazon.com with any additional questions or comments.
-
-
-## Security issue notifications
-If you discover a potential security issue in this project we ask that you notify AWS/Amazon Security via our [vulnerability reporting page](http://aws.amazon.com/security/vulnerability-reporting/). Please do **not** create a public github issue.
-
+If you think you have found a security issue, please do not open a public
+issue. Report it privately to the repository maintainers instead.
 
 ## Licensing
 
-See the [LICENSE](https://github.com/awslabs/serverless-fixity-for-digital-preservation-compliance/blob/master/LICENSE.txt) file for our project's licensing. We will ask you to confirm the licensing of your contribution.
-
-We may ask you to sign a [Contributor License Agreement (CLA)](http://en.wikipedia.org/wiki/Contributor_License_Agreement) for larger changes.
+Contributions are accepted under the MIT-0 license that covers this project.
+See [LICENSE.txt](LICENSE.txt).
