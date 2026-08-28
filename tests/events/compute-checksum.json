@@ -1,0 +1,11 @@
+{
+  "Bucket": "REPLACE-WITH-YOUR-BUCKET",
+  "Key": "REPLACE-WITH-YOUR-OBJECT-KEY",
+  "Algorithms": ["md5", "sha1", "sha256"],
+  "StoreChecksumOnTagging": true,
+  "ChunkSize": 21474836480,
+  "RestoreRequest": {
+    "Days": 1,
+    "Tier": "Bulk"
+  }
+}

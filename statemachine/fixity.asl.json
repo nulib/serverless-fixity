@@ -1,0 +1,89 @@
+{
+  "Comment": "Restore an S3 object if archived, hash it with every requested algorithm over as many invocations as it takes, then compare and record the digests.",
+  "StartAt": "CheckRestoreStatus",
+  "States": {
+    "CheckRestoreStatus": {
+      "Type": "Task",
+      "Resource": "${CheckRestoreStatusArn}",
+      "Comment": "Pin the object's ETag and size, and start a Glacier restore if one is needed.",
+      "Next": "RestoreCompleted?",
+      "Retry": [
+        {
+          "Comment": "No amount of retrying grants permission, and neither a changed object nor a changed size becomes valid again.",
+          "ErrorEquals": ["ForbiddenError", "MismatchETagError", "MismatchFileSizeError"],
+          "MaxAttempts": 0
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 4,
+          "BackoffRate": 2
+        }
+      ]
+    },
+    "RestoreCompleted?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.RestoreStatus",
+          "StringEquals": "COMPLETED",
+          "Next": "ComputeChecksum"
+        }
+      ],
+      "Default": "WaitForRestore"
+    },
+    "WaitForRestore": {
+      "Type": "Wait",
+      "Comment": "CheckRestoreStatus sizes this wait from the storage class and retrieval tier, so polling stays cheap.",
+      "SecondsPath": "$.WaitInSeconds",
+      "Next": "CheckRestoreStatus"
+    },
+    "ComputeChecksum": {
+      "Type": "Task",
+      "Resource": "${ComputeChecksumArn}",
+      "Comment": "Hashes one range per invocation and loops back until the whole object has been read.",
+      "Next": "MoreData?",
+      "Retry": [
+        {
+          "ErrorEquals": ["ForbiddenError", "MismatchETagError", "MismatchFileSizeError"],
+          "MaxAttempts": 0
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 4,
+          "BackoffRate": 2
+        }
+      ]
+    },
+    "MoreData?": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.Status",
+          "StringEquals": "COMPLETED",
+          "Next": "FinalValidation"
+        }
+      ],
+      "Default": "ComputeChecksum"
+    },
+    "FinalValidation": {
+      "Type": "Task",
+      "Resource": "${FinalValidationArn}",
+      "Comment": "Compare each digest against a known reference and record it on the object.",
+      "End": true,
+      "Retry": [
+        {
+          "ErrorEquals": ["ForbiddenError"],
+          "MaxAttempts": 0
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 4,
+          "BackoffRate": 2
+        }
+      ]
+    }
+  }
+}

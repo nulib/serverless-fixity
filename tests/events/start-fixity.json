@@ -1,0 +1,7 @@
+{
+  "httpMethod": "POST",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": "{\"Bucket\":\"REPLACE-WITH-YOUR-BUCKET\",\"Key\":\"REPLACE-WITH-YOUR-OBJECT-KEY\",\"Algorithms\":[\"md5\",\"sha256\"]}"
+}
